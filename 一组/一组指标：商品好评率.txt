@@ -1,0 +1,156 @@
+1 确定商品好评率的定义
+好评率就是好评数与总评数的比率，我们只需要求出每个商品的总评率然后再求出好评率就可以实现这个指标
+
+2数据源设计
+ 我们需要从ods的订单表中拿到这些字段：订单ID、用户ID、商品ID、订单状态、创建时间等。
+ 从ods的评论表拿到字段：评论ID、订单ID、评分、评论内容等。
+ 
+ 因为我们要求的好评率不需要很多无用的字段，所以我们可以分层去建表，先建一个dim表把这些拿出来的字段总和起来
+ 
+3好评率计算
+计算逻辑
+总评数：从我们新建的dim表中统计每个商品所有评论的数量。
+好评数：从新建的dim表中统计每个商品评论是好评的数量。
+好评率 = 好评数 / 总评数。
+4定时任务
+设定每日或每周的定时任务，计算并更新好评率指标。
+ 
+ 5数据展示
+ 看板设计
+制作仪表盘，展示整体好评率。
+可视化工具
+使用数据可视化工具（如Tableau、Power BI等）进行展示。
+
+6监控与优化
+监控数据质量：定期检查评论数据的完整性与准确性，确保计算结果的可靠性。
+用户反馈：根据用户反馈和使用情况，不断优化报表展示和数据计算逻辑。
+实施步骤
+需求分析：确认各利益相关者对好评率的需求。
+数据源整合：与技术团队合作，确保数据源的整合和准确。
+开发与测试：进行数据模型的开发，并进行充分测试。
+
+7总结
+这个设计方案能够为电商平台提供准确的好评率分析，帮助商家了解客户对每个商品的满意度，优化商品和服务，从而提升整体业务表现。
+
+
+
+分层代码
+-- 评论维度表
+DROP TABLE IF EXISTS dim_comment_info_full111;
+CREATE EXTERNAL TABLE dim_comment_info_full111
+(
+    `id`           string comment '评论编号',
+    `user_id`      STRING COMMENT '用户ID',
+    `nick_name`    string comment '用户昵称',
+    `comment_txt`  STRING COMMENT '评论内容',
+    `user_name`    STRING COMMENT '用户姓名',
+    `phone_num`    STRING COMMENT '手机号码',
+    `order_id`     STRING COMMENT '订单ID',
+    `sku_id`       STRING COMMENT '商品SKU_ID',
+    `sku_name`     STRING COMMENT '商品名称',
+    `sku_desc`     STRING COMMENT '商品描述',
+    `price`        DECIMAL(16, 2) COMMENT '商品价格',
+    `weight`       DECIMAL(16, 2) COMMENT '重量',
+    `is_sale`      BOOLEAN COMMENT '是否在售',
+    `spu_id`       STRING COMMENT 'SPU编号',
+    `spu_name`     STRING COMMENT 'SPU名称',
+    `appraise`     string comment '评价 1好评 2中评 3差评',
+    `create_time`  string comment '创建时间',
+    `operate_time` string comment '修改时间'
+) COMMENT '评论维度表'
+    partitioned by (`dt` string)
+    stored as orc
+    location '/warehouse/gmall/dim/dim_comment_info_full111/'
+    tblproperties ('orc.compress' = 'snappy');
+
+set hive.exec.dynamic.partition.mode=nonstrict;
+INSERT INTO TABLE dim_comment_info_full111 PARTITION (dt)
+SELECT
+    c.data.id,
+    c.data.user_id,
+    c.data.nick_name,
+    c.data.comment_txt,
+    u.name,
+    u.phone_num,
+    c.data.order_id,
+    s.id,
+    s.sku_name,
+    s.sku_desc,
+    s.price,
+    s.weight,
+    s.is_sale,
+    s.spu_id,
+    s.spu_name,
+    c.data.appraise,
+    c.data.create_time,
+    c.data.operate_time,
+    c.dt
+FROM ods_comment_info_inc c
+         JOIN dim_user_zip u ON c.data.user_id = u.id
+         JOIN dim_sku_full s ON c.data.sku_id = s.id
+         JOIN ods_sku_attr_value_full av ON c.data.sku_id = av.sku_id;
+
+
+select * from dim_comment_info_full111;
+
+
+SELECT
+    spu_id,
+    spu_name,
+    sku_id,
+    sku_name,
+    SUM(CASE WHEN appraise = '1201' THEN 1 ELSE 0 END) AS good_review_count, -- 好评人数
+    COUNT(*) AS total_reviews,
+    (SUM(CASE WHEN appraise = '1201' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0)) AS good_review_rate
+FROM dim_comment_info_full111
+GROUP BY spu_id, spu_name, sku_id, sku_name;
+
+
+Ods层代码
+-- 评论主题 商品好评率
+DROP TABLE IF EXISTS ads_comment_rate;
+CREATE EXTERNAL TABLE ads_comment_rate
+(
+    `sku_id`             STRING COMMENT '商品SKU_ID',
+    `sku_name`           STRING COMMENT '商品名称',
+    `spu_id`             STRING COMMENT 'SPU编号',
+    `spu_name`           STRING COMMENT 'SPU名称',
+    `good_review_count,` BIGINT COMMENT '好评人数',
+    `total_reviews`      BIGINT COMMENT '总评人数',
+    `sku_review_rate`    DECIMAL(16, 2) COMMENT '好评率'
+) COMMENT '商品好评率'
+    ROW FORMAT DELIMITED FIELDS TERMINATED BY '\t'
+    LOCATION '/warehouse/gmall/ads/ads_comment_rate/';
+
+insert overwrite table ads_comment_rate
+SELECT
+    sku_id,
+    sku_name,
+    spu_id,
+    spu_name,
+    SUM(CASE WHEN appraise = '1201' THEN 1 ELSE 0 END) AS good_review_count, -- 好评人数
+    COUNT(*) AS total_reviews,
+    (SUM(CASE WHEN appraise = '1201' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0)) AS good_review_rate
+FROM dim_comment_info_full111
+GROUP BY sku_id, sku_name, spu_id, spu_name;
+
+select * from ads_comment_rate;
+
+
+
+
+ 临时代码：
+
+WITH review_data AS (
+    SELECT
+        spu_id,
+        spu_name,
+        sku_id,
+        sku_name,
+        SUM(CASE WHEN appraise = '1201' THEN 1 ELSE 0 END) AS good_review_count,
+        COUNT(*) AS total_reviews,
+        (SUM(CASE WHEN appraise = '1201' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0)) AS good_review_rate
+    FROM dim_comment_info_full111
+    GROUP BY spu_id, spu_name, sku_id, sku_name
+)
+SELECT * FROM review_data;
