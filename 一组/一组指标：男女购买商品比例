@@ -1,0 +1,132 @@
+指标定义：
+男性用户各商品类别购买次数占比，统计男性用户在不同商品类别（一级品类、二级品类、三级品类）的购买次数，并计算每个类别购买次数占男性用户总购买次数的比例。
+
+女性用户各商品类别购买次数占比：类似男性用户，统计女性用户在不同商品类别的购买次数占比。
+
+二、方案步骤
+数据准备：
+从 DWS（数据仓库服务层）和 DWD（数据仓库明细层）的相关表中获取数据，包括订单明细、用户信息、商品维度等表。具体涉及的表有：
+dwd_trade_order_detail_inc：包含订单明细信息，如用户 ID、商品 ID、下单日期等。
+dim_user_zip：包含用户的详细信息，如用户 ID、性别等。
+dim_sku_full：包含商品的详细信息，如商品 ID、所属品类等。
+确保数据的完整性和准确性，对于缺失值或异常值进行适当的处理。
+数据处理
+使用 Hive SQL 进行数据查询和处理，连接上述相关表，筛选出所需的数据。
+根据用户的性别将数据分为男性和女性两部分。
+统计男性和女性用户在不同商品类别下的购买次数。
+计算指标
+对于男性用户，计算每个商品类别的购买次数占男性用户总购买次数的比例。
+对于女性用户，同样计算每个商品类别的购买次数占女性用户总购买次数的比例。
+结果存储
+将计算得到的男女购买商品类别分布指标结果存储到 ADS 层的新表中。
+创建新表，例如 ads_gender_category_distribution，包含以下字段：
+gender：用户性别。
+category_id：商品类别 ID，可以是一级、二级或三级品类 ID。
+category_name：商品类别名称。
+purchase_count：该性别用户在该类别下的购买次数。
+percentage：该类别购买次数占该性别用户总购买次数的比例。
+可视化展示
+使用数据可视化工具（如 Tableau、Superset 等）连接 ADS 层的新表，进行数据可视化展示。
+可以使用柱状图、饼图等图表展示男女用户在不同商品类别下的购买次数占比，以便更直观地了解男女用户的购买偏好差异。
+
+
+数据导入sql：
+
+-- 插入男性用户购买商品类别分布数据
+INSERT INTO ads_gender_category_distribution
+SELECT
+    'M' AS gender,
+    c.category_id,
+    c.category_name,
+    SUM(CASE WHEN u.gender = 'M' THEN 1 ELSE 0 END) AS purchase_count,
+    SUM(CASE WHEN u.gender = 'M' THEN 1 ELSE 0 END) / total_male_purchase_count AS percentage,
+    NULL -- 添加一个占位列以匹配目标表的列数
+FROM
+    dwd_trade_order_detail_inc od
+        JOIN dim_user_zip u ON od.user_id = u.id
+        JOIN dim_sku_full s ON od.sku_id = s.id
+        JOIN (
+        SELECT category_id, category_name
+        FROM (
+                 SELECT category1_id AS category_id, category1_name AS category_name FROM dim_sku_full
+                 UNION ALL
+                 SELECT category2_id AS category_id, category2_name AS category_name FROM dim_sku_full
+                 UNION ALL
+                 SELECT category3_id AS category_id, category3_name AS category_name FROM dim_sku_full
+             ) subquery
+    ) c ON s.category1_id = c.category_id OR s.category2_id = c.category_id OR s.category3_id = c.category_id
+        JOIN (
+        SELECT COUNT(*) AS total_male_purchase_count
+        FROM dwd_trade_order_detail_inc od
+                 JOIN dim_user_zip u ON od.user_id = u.id
+        WHERE u.gender = 'M'
+    ) total_male
+WHERE
+    u.gender = 'M'
+GROUP BY
+    c.category_id,
+    c.category_name,
+total_male_purchase_count;
+
+
+
+-- 插入女性用户购买商品类别分布数据
+INSERT INTO ads_gender_category_distribution
+SELECT
+    'F' AS gender,
+    c.category_id,
+    c.category_name,
+    SUM(CASE WHEN u.gender = 'F' THEN 1 ELSE 0 END) AS purchase_count,
+    SUM(CASE WHEN u.gender = 'F' THEN 1 ELSE 0 END) / total_female_purchase_count AS percentage,
+    NULL -- 添加一个占位列以匹配目标表的列数
+FROM
+    dwd_trade_order_detail_inc od
+        JOIN dim_user_zip u ON od.user_id = u.id
+        JOIN dim_sku_full s ON od.sku_id = s.id
+        JOIN (
+        SELECT category_id, category_name
+        FROM (
+                 SELECT category1_id AS category_id, category1_name AS category_name FROM dim_sku_full
+                 UNION ALL
+                 SELECT category2_id AS category_id, category2_name AS category_name FROM dim_sku_full
+                 UNION ALL
+                 SELECT category3_id AS category_id, category3_name AS category_name FROM dim_sku_full
+             ) subquery
+    ) c ON s.category1_id = c.category_id OR s.category2_id = c.category_id OR s.category3_id = c.category_id
+        JOIN (
+        SELECT COUNT(*) AS total_female_purchase_count
+        FROM dwd_trade_order_detail_inc od
+                 JOIN dim_user_zip u ON od.user_id = u.id
+        WHERE u.gender = 'F'
+    ) total_female
+WHERE
+    u.gender = 'F'
+GROUP BY
+    c.category_id,
+    c.category_name,
+    total_female_purchase_count;
+
+
+
+临时sql
+-- 检查 dwd_trade_order_detail_inc 表中的数据
+SELECT * FROM dwd_trade_order_detail_inc LIMIT 10;
+
+-- 检查 dim_user_zip 表中的数据
+SELECT * FROM dim_user_zip LIMIT 10;
+
+-- 检查 dim_sku_full 表中的数据
+SELECT * FROM dim_sku_full LIMIT 10;
+
+SELECT COUNT(*) AS total_male_purchase_count
+FROM dwd_trade_order_detail_inc od
+         JOIN dim_user_zip u ON od.user_id = u.id
+WHERE u.gender = 'M';
+
+SELECT COUNT(*) AS total_male_purchase_count
+FROM dwd_trade_order_detail_inc od
+         JOIN dim_user_zip u ON od.user_id = u.id
+WHERE u.gender = 'F';
+
+
+
