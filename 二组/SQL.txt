@@ -1,0 +1,55 @@
+WITH CartTotal AS (
+    SELECT SUM(sku_num) AS total_cart_items
+    FROM dwd_trade_cart_full
+    WHERE dt = '2022-06-08'
+),
+-- 计算从购物车购买的商品数（通过匹配用户和商品）
+     PurchasedFromCart AS (
+         SELECT SUM(od.sku_num) AS purchased_cart_items
+         FROM dwd_trade_order_detail_inc od
+                  JOIN dwd_trade_cart_full cf ON od.user_id = cf.user_id AND od.sku_id = cf.sku_id
+         WHERE od.dt = '2022-06-08' AND cf.dt = '2022-06-08'
+     )
+-- 计算购物车内转化率
+SELECT
+    (CASE WHEN total_cart_items > 0
+              THEN (purchased_cart_items / total_cart_items) * 100
+          ELSE 0 END) AS cart_conversion_rate
+FROM CartTotal, PurchasedFromCart;
+
+
+
+
+
+
+
+
+-- 创建ads层表用于存储购物车内转化率
+CREATE TABLE IF NOT EXISTS ads_cart_conversion_rate (
+                                                        cart_conversion_rate DECIMAL(5, 2),
+                                                        calculation_date STRING
+);
+-- 2. 使用INSERT INTO语句将计算得到的转化率写入ads层表
+--            sql
+--            复制
+-- 计算加入购物车的商品总数
+WITH CartTotal AS (
+    SELECT SUM(sku_num) AS total_cart_items
+    FROM dwd_trade_cart_full
+    WHERE dt = '2022-06-08'
+),
+-- 计算从购物车购买的商品数（通过匹配用户和商品）
+     PurchasedFromCart AS (
+         SELECT SUM(od.sku_num) AS purchased_cart_items
+         FROM dwd_trade_order_detail_inc od
+                  JOIN dwd_trade_cart_full cf ON od.user_id = cf.user_id AND od.sku_id = cf.sku_id
+         WHERE od.dt = '2022-06-08' AND cf.dt = '2022-06-08'
+     )
+-- 插入购物车内转化率数据到ads层表
+INSERT INTO ads_cart_conversion_rate
+SELECT
+    (CASE WHEN total_cart_items > 0
+              THEN (purchased_cart_items / total_cart_items) * 100
+          ELSE 0 END) AS cart_conversion_rate,
+    '2022-06-08' AS calculation_date
+FROM CartTotal, PurchasedFromCart;
