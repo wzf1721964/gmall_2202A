@@ -1,0 +1,63 @@
+指标名称：购物车支付转化率
+思路：购物车支付转化率定义为在一定时间内，将商品加入购物车后最终完成支付的用户数量与将商品加入购物车的总用户数量的比例。因此，需要以下字段：日期，sku_id，加入购物车的用户数，完成支付的用户数，购物车支付转化率 。数据来源是dwd层的交易域加购事务事实表 dwd_trade_cart_add_inc和交易域下单事务事实表 dwd_trade_order_detail_inc
+CREATE TABLE IF NOT EXISTS ads_cart_to_paid_conversion (
+      `dt` STRING,
+      `sku_id` STRING,
+      `cart_users` BIGINT,
+      `paid_users` BIGINT,
+      `cart_to_paid_conversion_rate` DOUBLE
+)COMMENT '购物车支付转化率'
+    ROW FORMAT DELIMITED
+        FIELDS TERMINATED BY '\t'
+    LOCATION '/warehouse/gmall/ads/ads_cart_to_paid_conversion/';
+
+INSERT overwrite table ads_cart_to_paid_conversion
+SELECT
+    '2024-10-13',
+    t.sku_id,
+    t.cart_users,
+    t.paid_users,
+    (t.paid_users / t.cart_users) * 100 AS cart_to_paid_conversion_rate
+
+FROM
+    (
+        SELECT
+            '2024-10-13',
+            c.sku_id,
+            COUNT(DISTINCT c.user_id) AS cart_users,
+            COUNT(DISTINCT o.user_id) AS paid_users
+
+        FROM
+            dwd_trade_cart_add_inc c
+                LEFT JOIN
+            dwd_trade_pay_detail_suc_inc o ON c.user_id = o.user_id AND DATE(o.callback_time) = DATE(c.create_time)
+        GROUP BY
+            DATE(c.create_time),
+            c.sku_id
+) t;
+
+
+
+临时sql：SELECT
+    '2024-10-13',
+    t.sku_id,
+    t.cart_users,
+    t.paid_users,
+    (t.paid_users / t.cart_users) * 100 AS cart_to_paid_conversion_rate
+
+FROM
+    (
+        SELECT
+            '2024-10-13',
+            c.sku_id,
+            COUNT(DISTINCT c.user_id) AS cart_users,
+            COUNT(DISTINCT o.user_id) AS paid_users
+
+        FROM
+            dwd_trade_cart_add_inc c
+                LEFT JOIN
+            dwd_trade_pay_detail_suc_inc o ON c.user_id = o.user_id AND DATE(o.callback_time) = DATE(c.create_time)
+        GROUP BY
+            DATE(c.create_time),
+            c.sku_id
+    ) t;
