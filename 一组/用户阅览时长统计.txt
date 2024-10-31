@@ -1,0 +1,20 @@
+DROP TABLE IF EXISTS ads_user_time;
+CREATE EXTERNAL TABLE ads_user_time
+(
+    `user_id`             STRING COMMENT '用户id',
+    `sum_time`           bigint COMMENT '用户阅览时间'
+) COMMENT '商品好评率'
+    ROW FORMAT DELIMITED FIELDS TERMINATED BY '\t'
+    LOCATION '/warehouse/gmall/ads/ads_user_tiem/';
+
+insert overwrite table ads_user_time
+select
+    common.mid,
+    sum(page.during_time)
+from ods_log_inc
+group by common.mid;
+
+select * from ads_user_time;
+
+
+需求设计，我们考虑到用户的阅览时间决定了用户对这个应用或者说对这个页面的喜欢程度，所以统计这个指标
