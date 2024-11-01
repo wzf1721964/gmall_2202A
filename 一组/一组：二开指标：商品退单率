@@ -1,0 +1,93 @@
+各商品的退单率：
+退单率通常定义为在特定时间段内，退单数量与总订单数量的比率。这个比率可以用来衡量产品或服务的质量，以及客户满意度。
+为了计算退单率，我们需要从这些表中提取以下信息：
+从 ods_sku_info_full 表中提取每个商品的 skuid。
+从 ods_order_detail_inc 表中提取每个订单的 skuid 和 orderid。
+从 ods_refund_payment_inc 表中提取每个退款的 skuid 和 orderid。
+
+使用以下公式计算退单率：
+退单率 =  ( 总订单数量/退单数量 )×100%
+
+
+建表语句：
+CREATE TABLE ads_refund_rate_summary (
+           skuid INT COMMENT '商品ID',
+           total_sales INT COMMENT '总销售量',
+           total_refunds INT COMMENT '总退单量',
+           refund_rate DECIMAL(5, 2) COMMENT '退单率（百分比）'
+) COMMENT '退单率汇总表'
+    ROW FORMAT DELIMITED FIELDS TERMINATED BY '\t'
+    LOCATION '/warehouse/gmall/ads/ads_refund_rate_summary/';
+
+
+导入数据：
+INSERT INTO ads_refund_rate_summary (skuid, total_sales, total_refunds, refund_rate)
+SELECT
+    sales.sku_id,
+    COALESCE(refunds.total_refunds, 0) AS total_refunds,
+    sales.total_sales,
+    (COALESCE(refunds.total_refunds, 0) * 1.0 / sales.total_sales) * 100 AS refund_rate
+FROM
+    (
+        SELECT
+            data.sku_id AS sku_id,
+            COUNT(*) AS total_sales
+        FROM
+            ods_order_detail_inc
+        WHERE
+            type = 'bootstrap-insert'
+        GROUP BY
+            data.sku_id
+    ) sales
+        LEFT JOIN
+    (
+        SELECT
+            data.sku_id AS sku_id,
+            COUNT(*) AS total_refunds
+        FROM
+            ods_refund_payment_inc
+        WHERE
+            type = 'bootstrap-insert'
+          AND data.refund_status = '1602'
+        GROUP BY
+            data.sku_id
+    ) refunds
+    ON
+        sales.sku_id = refunds.sku_id;
+
+临时sql：
+SELECT
+    sales.sku_id,
+    COALESCE(refunds.total_refunds, 0) AS total_refunds,
+    sales.total_sales,
+    (COALESCE(refunds.total_refunds, 0) * 1.0 / sales.total_sales) * 100 AS refund_rate
+FROM
+    (
+        SELECT
+            data.sku_id AS sku_id,
+            COUNT(*) AS total_sales
+        FROM
+            ods_order_detail_inc
+        WHERE
+            type = 'bootstrap-insert'
+        GROUP BY
+            data.sku_id
+    ) sales
+        LEFT JOIN
+    (
+        SELECT
+            data.sku_id AS sku_id,
+            COUNT(*) AS total_refunds
+        FROM
+            ods_refund_payment_inc
+        WHERE
+            type = 'bootstrap-insert'
+          AND data.refund_status = '1602'
+        GROUP BY
+            data.sku_id
+    ) refunds
+    ON
+        sales.sku_id = refunds.sku_id;
+
+
+
