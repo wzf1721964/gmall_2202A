@@ -1,0 +1,69 @@
+二次开发指标 商品转换率
+
+作用：该指标反映了用户从浏览商品到将商品加入购物车的转化效率。它可以帮助商家了解商品的吸引力以及用户在浏览阶段的购买意向程度。
+意义：如果这个转化率较高，说明商品在展示给用户时能够有效地引起用户的兴趣，促使他们将商品加入购物车，为后续的购买行为打下基础。商家可以通过分析这个指标，优化商品的展示页面、图片、描述等信息，提高商品的吸引力，从而提升这个转化率。
+加购到下单转化率（conversion_rate_cart_order）：
+作用：此指标衡量了用户将商品加入购物车后最终下单购买的转化效果。它反映了用户在购物决策过程中的最后一步转化情况。
+意义：较高的加购到下单转化率意味着用户在加入购物车后有较大的可能性完成购买。商家可以通过分析这个指标，找出影响用户下单的因素，如价格、促销活动、支付方式等，并进行相应的优化，以提高这个转化率，从而增加商品的销售。
+总体而言，这些商品转化率指标可以帮助商家深入了解用户的购买行为和决策过程，为优化商品销售策略提供重要的参考依据。
+
+
+从dim_sku_full（商品维度表）中获取商品的基本信息（sku_id和sku_name）。
+通过左连接的方式分别关联以下三个表获取相应指标数据：
+关联dws_traffic_page_visitor_page_view_1d（流量域访客页面粒度页面浏览最近 1 日汇总表），按照商品 ID 进行连接，获取商品浏览次数view_count_1d，如果没有匹配到数据则默认为 0。
+关联dws_trade_user_cart_add_1d（交易域用户粒度加购最近 1 日汇总表），按照商品 ID 进行连接，获取商品加购次数cart_add_count_1d，如果没有匹配到数据则默认为 0。
+关联dws_trade_user_sku_order_1d（交易域用户商品粒度订单最近 1 日汇总表），按照商品 ID 进行连接，获取商品下单次数order_count_1d，如果没有匹配到数据则默认为 0。
+计算转化率指标：
+conversion_rate_view_cart（浏览到加购转化率），当商品浏览次数大于 0 时，计算公式为加购次数除以浏览次数，否则为 0。
+conversion_rate_cart_order（加购到下单转化率），当商品加购次数大于 0 时，计算公式为下单次数除以加购次数，否则为 0。
+将计算得到的商品转化率数据插入到ads_product_conversion_rate表中，指定分区为dt = '2024-10-17'。
+
+DROP TABLE IF EXISTS ads_product_conversion_rate;
+CREATE EXTERNAL TABLE ads_product_conversion_rate
+(
+    `id`                   STRING COMMENT '商品 SKU ID',
+    `sku_name`                 STRING COMMENT '商品名称',
+    `views`                    BIGINT COMMENT '商品浏览次数',
+    `add_to_cart_count`        BIGINT COMMENT '加购次数',
+    `order_count`              BIGINT COMMENT '下单次数',
+    `conversion_rate_view_cart` DECIMAL(10, 4) COMMENT '浏览到加购转化率',
+    `conversion_rate_cart_order` DECIMAL(10, 4) COMMENT '加购到下单转化率'
+) COMMENT '商品转化率表'
+    PARTITIONED BY (`dt` STRING)
+    STORED AS ORC
+    LOCATION '/warehouse/gmall/ads/ads_product_conversion_rate'
+    TBLPROPERTIES ('orc.compress' = 'snappy');
+
+-- 计算商品转化率指标
+INSERT OVERWRITE TABLE ads_product_conversion_rate PARTITION (dt = '2024-10-17')
+SELECT
+    sku.id,
+    sku.sku_name,
+    COALESCE(page_views.view_count_1d, 0) AS views,
+    COALESCE(cart_adds.cart_add_count_1d, 0) AS add_to_cart_count,
+    COALESCE(order_skus.order_count_1d, 0) AS order_count,
+    CASE
+        WHEN COALESCE(page_views.view_count_1d, 0) > 0 THEN (COALESCE(cart_adds.cart_add_count_1d, 0) / COALESCE(page_views.view_count_1d, 0))
+        ELSE 0
+        END AS conversion_rate_view_cart,
+    CASE
+        WHEN COALESCE(cart_adds.cart_add_count_1d, 0) > 0 THEN (COALESCE(order_skus.order_count_1d, 0) / COALESCE(cart_adds.cart_add_count_1d, 0))
+        ELSE 0
+        END AS conversion_rate_cart_order
+FROM
+    -- 从商品维度表获取商品信息
+    dim_sku_full sku
+        LEFT JOIN
+    -- 从流量域访客页面粒度页面浏览最近 1 日汇总表获取商品浏览次数
+        (SELECT mid_id, view_count_1d FROM dws_traffic_page_visitor_page_view_1d WHERE dt = '2024-10-17') page_views
+    ON sku.id = page_views.mid_id
+        LEFT JOIN
+    -- 从交易域用户粒度加购最近 1 日汇总表获取商品加购次数
+        (SELECT user_id, cart_add_count_1d FROM dws_trade_user_cart_add_1d WHERE dt = '2024-10-17') cart_adds
+    ON sku.id = cart_adds.user_id
+        LEFT JOIN
+    -- 从交易域用户商品粒度订单最近 1 日汇总表获取商品下单次数
+        (SELECT sku_id, order_count_1d FROM dws_trade_user_sku_order_1d WHERE dt = '2024-10-17') order_skus
+    ON sku.id = order_skus.sku_id;
+
+select * from ads_product_conversion_rate;
